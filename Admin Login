@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Login - Red Bus Karachi</title>
+    <style>
+        :root { --main-red: #8B1A1A; --bg-gray: #F2F2F2; }
+        body { 
+            font-family: 'Segoe UI', sans-serif; 
+            background-color: #f8f8f8; 
+            margin: 0; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            height: 100vh; 
+        }
+        .login-card { 
+            width: 90%; 
+            max-width: 350px; 
+            background: white; 
+            padding: 30px; 
+            border-radius: 15px; 
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1); 
+            text-align: center;
+        }
+        .header-strip {
+            background: var(--main-red);
+            color: white;
+            padding: 10px;
+            border-radius: 10px 10px 0 0;
+            margin: -30px -30px 25px -30px;
+            font-weight: bold;
+        }
+        input { 
+            width: 100%; 
+            padding: 14px; 
+            margin: 10px 0; 
+            border: 1px solid #ddd; 
+            border-radius: 8px; 
+            background: var(--bg-gray); 
+            box-sizing: border-box; 
+            font-size: 16px;
+        }
+        .login-btn { 
+            width: 100%; 
+            padding: 14px; 
+            background: var(--main-red); 
+            color: white; 
+            border: none; 
+            border-radius: 8px; 
+            font-weight: bold; 
+            font-size: 16px;
+            cursor: pointer; 
+            margin-top: 15px;
+            transition: opacity 0.2s;
+        }
+        .login-btn:hover { opacity: 0.9; }
+        .back-link { display: block; margin-top: 20px; color: #666; text-decoration: none; font-size: 14px; }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <div class="header-strip">ADMIN LOGIN</div>
+        <input type="text" placeholder="Admin Username" id="user">
+        <input type="password" placeholder="Password" id="pass">
+        <button class="login-btn" onclick="checkAuth()">Login</button>
+        <a href="index.html" class="back-link">← Back to User App</a>
+    </div>
+
+    <script>
+        // Simple mock authentication for your simulation
+        function checkAuth() {
+            const user = document.getElementById('user').value;
+            const pass = document.getElementById('pass').value;
+            if(user === "admin" && pass === "1234") {
+                window.location.href = "admin-dashboard.html";
+            } else {
+                alert("Invalid Credentials. (Try admin / 1234)");
+            }
+        }
+    </script>
+</body>
+</html>
