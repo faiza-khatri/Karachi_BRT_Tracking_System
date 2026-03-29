@@ -32,6 +32,11 @@ def admin_login():
 def admin_dashboard():
     return render_template('Admin Management.html')
 
+@app.route('/login-validation', methods=['POST'])
+def login_validation():
+    # This is where you will eventually check MySQL
+    return redirect('/search')
+
 @app.route('/db-test')
 def db_test():
     # This is a separate page to prove to your teacher the DB works
