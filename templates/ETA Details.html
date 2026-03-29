@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>R-07 Live Location</title>
+    <style>
+        :root { --main-red: #8B1A1A; }
+        body { font-family: sans-serif; margin: 0; background: #fff; }
+        header { background: var(--main-red); color: white; padding: 15px; text-align: center; font-weight: bold; }
+        .station-container { padding: 20px; }
+        .station-row { display: flex; align-items: center; margin-bottom: 25px; position: relative; }
+        .dot { height: 12px; width: 12px; border: 2px solid #ccc; border-radius: 50%; background: white; margin-right: 15px; z-index: 2; }
+        .dot.active { background: var(--main-red); border-color: var(--main-red); }
+        .line { position: absolute; left: 5px; top: 12px; bottom: -25px; width: 2px; background: #ccc; z-index: 1; }
+        .eta { margin-left: auto; font-weight: bold; color: var(--main-red); }
+        .bus-img { width: 100px; display: block; margin: 20px auto; }
+    </style>
+</head>
+<body>
+    <header>R-07 Live Location</header>
+    <div style="text-align: center; padding: 10px; font-weight: bold;">NED University</div>
+    <img src="https://img.icons8.com/color/96/bus.png" class="bus-img">
+    <div class="station-container">
+        <div class="station-row">
+            <div class="dot active"></div><div class="line"></div>
+            <span>NED University</span> <span class="eta">ETA:</span>
+        </div>
+        <div class="station-row">
+            <div class="dot"></div><div class="line"></div>
+            <span>Nipa</span> <span class="eta">5 min</span>
+        </div>
+        <div class="station-row">
+            <div class="dot"></div>
+            <span>Civic Centre</span> <span class="eta">12 min</span>
+        </div>
+    </div>
+</body>
+</html>
