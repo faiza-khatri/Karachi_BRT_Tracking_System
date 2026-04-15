@@ -31,7 +31,6 @@
 
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { adminLogin } from '../api';
 
 const styles = {
   page: {
@@ -134,26 +133,38 @@ export default function Login() {
   const navigate = useNavigate();
 
   const handleLogin = async () => {
-    if (!username || !password) {
-      setError('Please enter your username and password.');
-      return;
+  if (!username || !password) {
+    setError('Please enter your username and password.');
+    return;
+  }
+  
+  setError('');
+  setLoading(true);
+
+  try {
+    // We fetch from your Node server (Port 5000) instead of using the '../api' import
+    const response = await fetch('http://localhost:5000/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+
+    const data = await response.json();
+
+    if (data.success) {
+      // 1. Save the token your Node server sends
+      localStorage.setItem('adminToken', data.token || 'true');
+      // 2. Redirect to the Dashboard
+      navigate('/dashboard');
+    } else {
+      setError(data.message || 'Invalid credentials');
     }
-    setError('');
-    setLoading(true);
-    try {
-      const data = await adminLogin(username, password);
-      if (data.token) {
-        localStorage.setItem('adminToken', data.token);
-        navigate('/dashboard');
-      } else {
-        setError(data.error || 'Invalid credentials. Please try again.');
-      }
-    } catch {
-      setError('Cannot connect to server. Make sure Flask is running.');
-    } finally {
-      setLoading(false);
-    }
-  };
+  } catch (err) {
+    setError('Cannot connect to server. Make sure Node.js is running on port 5000.');
+  } finally {
+    setLoading(false);
+  }
+};
 
   // Allow Enter key to submit
   const handleKeyDown = (e) => {

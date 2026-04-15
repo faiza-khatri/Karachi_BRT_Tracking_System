@@ -10,6 +10,12 @@ CREATE TABLE routes (
     end_point VARCHAR(100)
 );
 
+CREATE TABLE users(
+	user_id INT AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(10) UNIQUE NOT NULL,
+    password VARCHAR(10) UNIQUE NOT NULL
+);
+
 -- 2. Create Stations (Linked to Routes)
 CREATE TABLE stations (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -46,3 +52,7 @@ INSERT INTO routes (route_name, start_point, end_point) VALUES
 INSERT INTO admins (username, password_hash) VALUES ('admin1', 'habib27');
 INSERT INTO admins (username, password_hash) VALUES ('admin2', 'habib24');
 INSERT INTO admins (username, password_hash) VALUES ('admin3', 'habib25');
+
+INSERT INTO users (user_id, username, password) VALUES ('1','yusra','wow12');
+INSERT INTO users (user_id, username, password) VALUES ('2','faiza','wow16');
+INSERT INTO users (user_id, username, password) VALUES ('3','sualeha','wow17');

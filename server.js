@@ -1,6 +1,6 @@
 const express = require('express');
 const mysql = require('mysql2');
-const cors = require('cors');
+const cors = require('cors'); //enables react to connect with nodejs
 
 const app = express();
 app.use(cors());
@@ -16,52 +16,26 @@ const db = mysql.createPool({
   queueLimit: 0
 });
 
-// --- REWRITTEN SECTION ---
+// Admin Login Route
+  app.post('/api/login', (req, res) => {
+  const { username, password } = req.body;
 
-// 1. A "Home" Route
-// Go to http://localhost:5000/ to see this
-app.get('/', (req, res) => {
-  res.send(`
-    <h1>🚌 Karachi Red Bus API is Live!</h1>
-    <p>Available Endpoints:</p>
-    <ul>
-      <li><a href="/api/buses">View All Buses (/api/buses)</a></li>
-      <li>Search by Route: <code>/api/buses/search?route=Tower</code></li>
-    </ul>
-  `);
-});
-
-// 2. Get All Buses
-app.get('/api/buses', (req, res) => {
-  const sql = 'SELECT * FROM buses';
-  db.query(sql, (err, results) => {
-    if (err) {
-      return res.status(500).json({ error: "Database query failed", details: err.message });
-    }
-    res.json({
-      count: results.length,
-      data: results
-    });
-  });
-});
-
-// 3. Search Buses by Route Name
-// Try: http://localhost:5000/api/buses/search?route=Model
-app.get('/api/buses/search', (req, res) => {
-  const routeQuery = req.query.route;
+  // We check the 'admins' table you created in SQL
+  const sql = 'SELECT * FROM users WHERE username = ? AND password = ?';
   
-  if (!routeQuery) {
-    return res.status(400).json({ error: "Please provide a route search term." });
-  }
+  db.query(sql, [username, password], (err, results) => {
+    if (err) return res.status(500).json({ error: err.message });
 
-  const sql = 'SELECT * FROM buses WHERE route_name LIKE ?';
-  db.query(sql, [`%${routeQuery}%`], (err, results) => {
-    if (err) return res.status(500).json(err);
-    res.json(results);
+    if (results.length > 0) {
+      // Success! Found a matching admin
+      res.json({ success: true, message: "Login Successful", user: results[0].username });
+    } else {
+      // Fail! No match
+      res.status(401).json({ success: false, message: "Invalid username or password" });
+    }
   });
 });
 
-// --- SERVER START ---
 
 app.listen(5000, () => {
   console.log('------------------------------------------');
