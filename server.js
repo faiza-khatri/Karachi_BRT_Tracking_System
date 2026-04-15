@@ -21,7 +21,7 @@ const db = mysql.createPool({
   const { username, password } = req.body;
 
   // We check the 'admins' table you created in SQL
-  const sql = 'SELECT * FROM users WHERE username = ? AND password = ?';
+  const sql = 'SELECT * FROM admins WHERE username = ? AND password_hash = ?';
   
   db.query(sql, [username, password], (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
