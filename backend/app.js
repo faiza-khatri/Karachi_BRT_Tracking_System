@@ -55,9 +55,12 @@ function requireAuth(req, res, next) {
   next();
 }
 
+
 // ─── Routes CRUD ──────────────────────────────────────────────────────────────
 app.get('/api/routes', requireAuth, (req, res) => {
-  db.query('SELECT * FROM Route', (err, results) => {
+  // We alias route_id as "id" so React's item.id works
+  const sql = 'SELECT route_id AS id, route_code, start_point, end_point, category FROM Route';
+  db.query(sql, (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json({ routes: results });
   });
@@ -65,14 +68,16 @@ app.get('/api/routes', requireAuth, (req, res) => {
 
 app.post('/api/routes', requireAuth, (req, res) => {
   const { route_code, start_point, end_point, category } = req.body;
-  if (!route_code) return res.status(400).json({ error: 'Route code is required' });
-  
   const sql = 'INSERT INTO Route (route_code, start_point, end_point, category) VALUES (?, ?, ?, ?)';
   db.query(sql, [route_code, start_point || '', end_point || '', category || 'BRT'], (err, result) => {
     if (err) return res.status(500).json({ error: err.message });
+    // Return "id" here too
     res.json({ route: { id: result.insertId, route_code, start_point, end_point, category } });
   });
 });
+
+
+
 
 app.delete('/api/routes/:id', requireAuth, (req, res) => {
   db.query('DELETE FROM Route WHERE route_id = ?', [req.params.id], (err) => {
@@ -82,26 +87,17 @@ app.delete('/api/routes/:id', requireAuth, (req, res) => {
 });
 
 // ─── Stations/Stops CRUD ──────────────────────────────────────────────────────
-// Add this under the // ─── Stations/Stops CRUD section
-app.get('/api/areas', (req, res) => {
-  // We link area to its nearest stop so the Route Finder still works with IDs
-  const sql = `
-    SELECT 
-      a.area_id, 
-      a.area_name AS name, 
-      a.nearest_stop_id AS id 
-    FROM Area a
-  `;
+
+app.get('/api/stations', requireAuth, (req, res) => {
+  const sql = 'SELECT stop_id AS id, stop_name, landmark FROM Stop';
   db.query(sql, (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
-    res.json({ areas: results });
+    res.json({ stations: results });
   });
 });
 
 app.post('/api/stations', requireAuth, (req, res) => {
   const { stop_name, landmark } = req.body;
-  if (!stop_name) return res.status(400).json({ error: 'Stop name is required' });
-  
   const sql = 'INSERT INTO Stop (stop_name, landmark) VALUES (?, ?)';
   db.query(sql, [stop_name, landmark || ''], (err, result) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -118,7 +114,8 @@ app.delete('/api/stations/:id', requireAuth, (req, res) => {
 
 // ─── Buses CRUD ───────────────────────────────────────────────────────────────
 app.get('/api/buses', requireAuth, (req, res) => {
-  db.query('SELECT * FROM Bus', (err, results) => {
+  const sql = 'SELECT bus_id AS id, bus_number, route_id FROM Bus';
+  db.query(sql, (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json({ buses: results });
   });
@@ -126,8 +123,6 @@ app.get('/api/buses', requireAuth, (req, res) => {
 
 app.post('/api/buses', requireAuth, (req, res) => {
   const { bus_number, route_id } = req.body;
-  if (!bus_number) return res.status(400).json({ error: 'Bus number is required' });
-  
   const sql = 'INSERT INTO Bus (bus_number, route_id) VALUES (?, ?)';
   db.query(sql, [bus_number, parseInt(route_id) || null], (err, result) => {
     if (err) return res.status(500).json({ error: err.message });
