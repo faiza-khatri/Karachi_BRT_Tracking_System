@@ -236,7 +236,7 @@ export default function Login() {
           <div className="field">
             <label>Username</label>
             <input
-              type="text" placeholder="admin1"
+              type="text" placeholder="admin"
               value={username} onChange={e => setUsername(e.target.value)} onKeyDown={onKey}
               autoComplete="username"
             />
@@ -255,9 +255,6 @@ export default function Login() {
             {loading ? 'Logging in…' : 'Log In'}
           </button>
 
-          <div className="hint">
-            Demo credentials — <span>admin1</span> / <span>habib27</span>
-          </div>
         </div>
       </div>
     </>

@@ -63,7 +63,8 @@ CREATE TABLE Simulated_Bus_Status (
 );
 
 INSERT INTO Admin (username, password_hash, role) 
-VALUES ('admin1', 'habib27', 'System_Admin');
+VALUES ('admin5', 'habib33', 'System_Admin'),
+('admin2', 'habib28', 'System_Admin'), 
+('admin3', 'habib29', 'System_Admin'), 
+('admin4', 'habib31', 'System_Admin');
 
-ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY 'proj123';
-FLUSH PRIVILEGES;
