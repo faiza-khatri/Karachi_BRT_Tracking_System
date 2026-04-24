@@ -7,12 +7,12 @@ const PORT    = 5000;
 app.use(cors({ origin: 'http://localhost:5173' }));
 app.use(express.json());
 
-//MySQL Connection Pool 
+// ─── MySQL Connection Pool ────────────────────────────────────────────────────
 const db = mysql.createPool({
   host:               'localhost',
   user:               'root',
   password:           'habib27',
-  database:           'KarachiRedBusApp', // Ensure this DB has Stop, Route, Bus, Admin tables
+  database:           'KarachiRedBusApp', 
   waitForConnections: true,
   connectionLimit:    10,
   queueLimit:         0,
@@ -23,13 +23,13 @@ db.getConnection((err, conn) => {
   else { console.log('✅ Connected to Karachi Red Bus DB!'); conn.release(); }
 });
 
-// Admin Login Authentication
+// ─── Admin Login Authentication ───────────────────────────────────────────────
 let sessions = new Set();
 
 app.post('/api/login', (req, res) => {
   const { username, password } = req.body;
-  // Updated table name to 'Admin'
-  const sql = 'SELECT * FROM Admin WHERE username = ? AND password_hash = ? AND role = ?';
+  // Fixed: Removed 'AND role = ?' because it was causing errors if not provided
+  const sql = 'SELECT * FROM Admin WHERE username = ? AND password_hash = ?';
   db.query(sql, [username, password], (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
     if (results.length > 0) {
@@ -55,7 +55,7 @@ function requireAuth(req, res, next) {
   next();
 }
 
-// ─── Routes CRUD (Updated for 'Route' table) ──────────────────────────────────
+// ─── Routes CRUD ──────────────────────────────────────────────────────────────
 app.get('/api/routes', requireAuth, (req, res) => {
   db.query('SELECT * FROM Route', (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -81,11 +81,20 @@ app.delete('/api/routes/:id', requireAuth, (req, res) => {
   });
 });
 
-// ─── Stations/Stops CRUD (Updated for 'Stop' table) ────────────────────────────
-app.get('/api/stations', (req, res) => {
-  db.query('SELECT * FROM Stop', (err, results) => {
+// ─── Stations/Stops CRUD ──────────────────────────────────────────────────────
+// Add this under the // ─── Stations/Stops CRUD section
+app.get('/api/areas', (req, res) => {
+  // We link area to its nearest stop so the Route Finder still works with IDs
+  const sql = `
+    SELECT 
+      a.area_id, 
+      a.area_name AS name, 
+      a.nearest_stop_id AS id 
+    FROM Area a
+  `;
+  db.query(sql, (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
-    res.json({ stations: results });
+    res.json({ areas: results });
   });
 });
 
@@ -107,7 +116,7 @@ app.delete('/api/stations/:id', requireAuth, (req, res) => {
   });
 });
 
-// ─── Buses CRUD (Updated for 'Bus' table) ─────────────────────────────────────
+// ─── Buses CRUD ───────────────────────────────────────────────────────────────
 app.get('/api/buses', requireAuth, (req, res) => {
   db.query('SELECT * FROM Bus', (err, results) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -133,7 +142,7 @@ app.delete('/api/buses/:id', requireAuth, (req, res) => {
   });
 });
 
-// ─── Route Finder (Logic from server.js, Data from GRAPH) ─────────────────────
+// ─── Route Finder (Hardcoded Graph) ───────────────────────────────────────────
 const GRAPH = {
   1: { name: 'Saddar',           neighbors: [2, 3] },
   2: { name: 'Clifton',          neighbors: [1, 4] },
@@ -177,7 +186,7 @@ app.get('/api/find-route', (req, res) => {
   res.json({ total_stops: path.length, buses_required: path.length > 3 ? 2 : 1, eta_minutes: path.length * 8, steps });
 });
 
-// ─── Live Bus Positions (Logic from server.js, Field names from server2.js) ───
+// ─── Live Bus Positions (Simulated) ───────────────────────────────────────────
 const busPositions = { 1: 0, 2: 0, 3: 1 };
 const busRoutes    = { 1: [1, 2, 4], 2: [6, 3, 5], 3: [1, 3, 4, 5] };
 
