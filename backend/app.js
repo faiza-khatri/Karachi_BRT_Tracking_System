@@ -4,15 +4,29 @@ const cors    = require('cors');
 const app     = express();
 const PORT    = 5000;
 
-app.use(cors({ origin: 'http://localhost:5173' }));
+// app.use(cors({ origin: 'http://localhost:5173' }));
+app.use(cors({ origin: '*' }));
 app.use(express.json());
 
-// ─── MySQL Connection Pool ────────────────────────────────────────────────────
+// // ─── MySQL Connection Pool ────────────────────────────────────────────────────
+// const db = mysql.createPool({
+//   host:               'localhost',
+//   user:               'root',
+//   password:           'habib27',
+//   database:           'KarachiRedBusApp', 
+//   waitForConnections: true,
+//   connectionLimit:    10,
+//   queueLimit:         0,
+// });
+
+// Change DB pool:
 const db = mysql.createPool({
-  host:               'localhost',
-  user:               'root',
-  password:           'habib27',
-  database:           'KarachiRedBusApp', 
+  host:               process.env.DB_HOST,
+  port:               parseInt(process.env.DB_PORT),
+  user:               process.env.DB_USER,
+  password:           process.env.DB_PASS,
+  database:           process.env.DB_NAME,
+  ssl:                { rejectUnauthorized: false }, // required for Aiven
   waitForConnections: true,
   connectionLimit:    10,
   queueLimit:         0,
