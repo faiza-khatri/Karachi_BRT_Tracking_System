@@ -27,7 +27,6 @@ db.getConnection((err, conn) => {
   if (err) { console.error('❌ DB Error:', err.message); return; }
   console.log('✅ Connected to Karachi Red Bus DB!');
   conn.release();
-  // Start simulation only after DB is confirmed connected
   simulation.startSimulation(db);
 });
 
@@ -61,6 +60,69 @@ function requireAuth(req, res, next) {
   next();
 }
 
+// ─── Public: Stats (used by Dashboard) ───────────────────────────────────────
+app.get('/api/stats', (req, res) => {
+  db.query('SELECT COUNT(*) AS total_stops FROM Stop', (err, stopRes) => {
+    if (err) return res.status(500).json({ error: err.message });
+    db.query('SELECT COUNT(*) AS total_buses FROM Bus', (err2, busRes) => {
+      if (err2) return res.status(500).json({ error: err2.message });
+      res.json({
+        total_stops:     stopRes[0].total_stops,
+        total_buses:     busRes[0].total_buses,
+        active_buses:    Object.keys(simulation.busStates).length,
+        tick_interval_s: 10,
+      });
+    });
+  });
+});
+
+// ─── Public: All Stops with coords ───────────────────────────────────────────
+// Must be PUBLIC (no requireAuth) — LiveMap calls this without a token
+app.get('/api/stops', (req, res) => {
+  db.query(
+    'SELECT stop_id, stop_name, landmark, latitude, longitude FROM Stop ORDER BY stop_name',
+    (err, results) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ stops: results });
+    }
+  );
+});
+
+// ─── Public: All routes with their ordered stops ──────────────────────────────
+// CRITICAL: this MUST come before /api/routes/:id/stops
+// otherwise Express matches "all-stops" as the :id param
+app.get('/api/routes/all-stops', (req, res) => {
+  db.query(`
+    SELECT r.route_id, r.route_code, r.category,
+           s.stop_id, s.latitude, s.longitude, s.stop_name,
+           rs.stop_sequence
+    FROM Route r
+    JOIN Route_Stop rs ON r.route_id = rs.route_id
+    JOIN Stop s ON rs.stop_id = s.stop_id
+    ORDER BY r.route_id, rs.stop_sequence
+  `, (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    const routes = {};
+    for (const row of rows) {
+      if (!routes[row.route_id]) {
+        routes[row.route_id] = {
+          route_id:   row.route_id,
+          route_code: row.route_code,
+          category:   row.category,
+          stops: [],
+        };
+      }
+      routes[row.route_id].stops.push({
+        stop_id:   row.stop_id,
+        stop_name: row.stop_name,
+        lat:       parseFloat(row.latitude),
+        lng:       parseFloat(row.longitude),
+      });
+    }
+    res.json({ routes: Object.values(routes) });
+  });
+});
+
 // ─── Routes CRUD ──────────────────────────────────────────────────────────────
 app.get('/api/routes', requireAuth, (req, res) => {
   db.query('SELECT route_id AS id, route_code, start_point, end_point, category FROM Route',
@@ -84,10 +146,51 @@ app.post('/api/routes', requireAuth, (req, res) => {
 });
 
 app.delete('/api/routes/:id', requireAuth, (req, res) => {
-  db.query('DELETE FROM Route WHERE route_id = ?', [req.params.id], (err) => {
+  // Delete route_stops first (FK constraint)
+  db.query('DELETE FROM Route_Stop WHERE route_id = ?', [req.params.id], (err) => {
     if (err) return res.status(500).json({ error: err.message });
-    res.json({ success: true });
+    db.query('DELETE FROM Route WHERE route_id = ?', [req.params.id], (err2) => {
+      if (err2) return res.status(500).json({ error: err2.message });
+      res.json({ success: true });
+    });
   });
+});
+
+// ─── Route stops (MUST come after /api/routes/all-stops) ─────────────────────
+app.get('/api/routes/:id/stops', (req, res) => {
+  db.query(`
+    SELECT rs.route_stop_id, rs.stop_sequence, rs.travel_time_from_prev_mins,
+           s.stop_id, s.stop_name, s.landmark, s.latitude, s.longitude
+    FROM Route_Stop rs
+    JOIN Stop s ON rs.stop_id = s.stop_id
+    WHERE rs.route_id = ?
+    ORDER BY rs.stop_sequence
+  `, [req.params.id], (err, results) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ stops: results });
+  });
+});
+
+app.post('/api/routes/:id/stops', requireAuth, (req, res) => {
+  const { stop_id, stop_sequence, travel_time_from_prev_mins } = req.body;
+  db.query(
+    'INSERT INTO Route_Stop (route_id, stop_id, stop_sequence, travel_time_from_prev_mins) VALUES (?, ?, ?, ?)',
+    [req.params.id, stop_id, stop_sequence, travel_time_from_prev_mins || 5],
+    (err, result) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ success: true, route_stop_id: result.insertId });
+    }
+  );
+});
+
+app.delete('/api/routes/:routeId/stops/:routeStopId', requireAuth, (req, res) => {
+  db.query('DELETE FROM Route_Stop WHERE route_stop_id = ? AND route_id = ?',
+    [req.params.routeStopId, req.params.routeId],
+    (err) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ success: true });
+    }
+  );
 });
 
 // ─── Stations CRUD ────────────────────────────────────────────────────────────
@@ -113,9 +216,13 @@ app.post('/api/stations', requireAuth, (req, res) => {
 });
 
 app.delete('/api/stations/:id', requireAuth, (req, res) => {
-  db.query('DELETE FROM Stop WHERE stop_id = ?', [req.params.id], (err) => {
+  // Remove from Route_Stop first
+  db.query('DELETE FROM Route_Stop WHERE stop_id = ?', [req.params.id], (err) => {
     if (err) return res.status(500).json({ error: err.message });
-    res.json({ success: true });
+    db.query('DELETE FROM Stop WHERE stop_id = ?', [req.params.id], (err2) => {
+      if (err2) return res.status(500).json({ error: err2.message });
+      res.json({ success: true });
+    });
   });
 });
 
@@ -140,135 +247,119 @@ app.post('/api/buses', requireAuth, (req, res) => {
 });
 
 app.delete('/api/buses/:id', requireAuth, (req, res) => {
-  db.query('DELETE FROM Bus WHERE bus_id = ?', [req.params.id], (err) => {
+  // Remove from Simulated_Bus_Status first
+  db.query('DELETE FROM Simulated_Bus_Status WHERE bus_id = ?', [req.params.id], (err) => {
     if (err) return res.status(500).json({ error: err.message });
-    res.json({ success: true });
+    db.query('DELETE FROM Bus WHERE bus_id = ?', [req.params.id], (err2) => {
+      if (err2) return res.status(500).json({ error: err2.message });
+      res.json({ success: true });
+    });
   });
 });
 
-// ─── Live Bus Positions (Simulation-driven) ───────────────────────────────────
-// Returns interpolated lat/lng + ETA to all stops on the route
+// ─── Live Bus Positions ───────────────────────────────────────────────────────
 app.get('/api/bus-positions', (req, res) => {
   const positions = simulation.getLivePositions();
   res.json({ positions, timestamp: new Date().toISOString() });
 });
 
-// ─── Public: All Stops with coords ───────────────────────────────────────────
-app.get('/api/stops', (req, res) => {
-  db.query(
-    'SELECT stop_id, stop_name, landmark, latitude, longitude FROM Stop ORDER BY stop_name',
-    (err, results) => {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ stops: results });
-    }
-  );
-});
-
-// ─── Public: Route details with ordered stops ─────────────────────────────────
-app.get('/api/routes/:id/stops', (req, res) => {
-  db.query(`
-    SELECT rs.stop_sequence, rs.travel_time_from_prev_mins,
-           s.stop_id, s.stop_name, s.landmark, s.latitude, s.longitude
-    FROM Route_Stop rs
-    JOIN Stop s ON rs.stop_id = s.stop_id
-    WHERE rs.route_id = ?
-    ORDER BY rs.stop_sequence
-  `, [req.params.id], (err, results) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json({ stops: results });
-  });
-});
-
-// ─── Route Finder (BFS on actual DB graph) ────────────────────────────────────
-// Find route between two stop_ids using the loaded simulation graph
-app.get('/api/find-route', (req, res) => {
-  const fromId = parseInt(req.query.from);
-  const toId   = parseInt(req.query.to);
-
-  if (!fromId || !toId) return res.status(400).json({ error: 'Provide from and to stop_id params' });
-  if (fromId === toId)  return res.status(400).json({ error: 'Start and destination are the same' });
-
-  // Build adjacency from simulation's loaded route data
-  const routeData = simulation.routes;
-  const stopNames = {};  // stop_id → stop_name
-  const graph     = {}; // stop_id → Set of {stop_id, route_id, travel_time}
-
-  for (const [routeId, route] of Object.entries(routeData)) {
-    const stops = route.stops;
-    for (let i = 0; i < stops.length; i++) {
-      const s = stops[i];
-      stopNames[s.stop_id] = s.stop_name;
-      if (!graph[s.stop_id]) graph[s.stop_id] = [];
-
-      if (i > 0) {
-        const prev = stops[i - 1];
-        graph[s.stop_id].push({ stop_id: prev.stop_id, route_id: parseInt(routeId), travel_time: s.travel_time });
-        graph[prev.stop_id] = graph[prev.stop_id] || [];
-        graph[prev.stop_id].push({ stop_id: s.stop_id, route_id: parseInt(routeId), travel_time: s.travel_time });
-      }
-    }
-  }
-
-  if (!graph[fromId]) return res.status(404).json({ error: 'Start stop not found in any route' });
-  if (!graph[toId])   return res.status(404).json({ error: 'Destination stop not found in any route' });
-
-  // BFS (finds fewest stops; could be Dijkstra for shortest time)
-  const visited = new Set();
-  const queue   = [{ stop_id: fromId, path: [fromId], routeIds: [], totalMins: 0 }];
-
-  let found = null;
-  while (queue.length) {
-    const { stop_id, path, routeIds, totalMins } = queue.shift();
-    if (stop_id === toId) { found = { path, routeIds, totalMins }; break; }
-    if (visited.has(stop_id)) continue;
-    visited.add(stop_id);
-
-    for (const neighbor of (graph[stop_id] || [])) {
-      if (!visited.has(neighbor.stop_id)) {
-        queue.push({
-          stop_id:   neighbor.stop_id,
-          path:      [...path, neighbor.stop_id],
-          routeIds:  [...routeIds, neighbor.route_id],
-          totalMins: totalMins + neighbor.travel_time,
-        });
-      }
-    }
-  }
-
-  if (!found) return res.status(404).json({ error: 'No route found between these stops' });
-
-  const steps = found.path.map((stopId, i) => ({
-    stop_id:   stopId,
-    stop_name: stopNames[stopId] || `Stop ${stopId}`,
-    action:    i === 0 ? 'board' : i === found.path.length - 1 ? 'exit' : 'pass',
-    route_id:  found.routeIds[i] ?? null,
-  }));
-
-  res.json({
-    from:        stopNames[fromId],
-    to:          stopNames[toId],
-    total_stops: found.path.length,
-    eta_minutes: found.totalMins,
-    steps,
-  });
-});
-
-// ─── ETA: Which buses are coming to a stop and when ──────────────────────────
+// ─── ETA: buses arriving at a stop ───────────────────────────────────────────
 app.get('/api/stop/:stopId/arrivals', (req, res) => {
-  const stopId   = parseInt(req.params.stopId);
+  const stopId    = parseInt(req.params.stopId);
   const positions = simulation.getLivePositions();
-
-  const arrivals = positions
+  const arrivals  = positions
     .filter(bus => bus.eta_to_stops && bus.eta_to_stops[stopId] !== undefined)
     .map(bus => ({
-      bus_id:     bus.bus_id,
-      bus_number: bus.bus_number,
-      route_id:   bus.route_id,
+      bus_id:      bus.bus_id,
+      bus_number:  bus.bus_number,
+      route_id:    bus.route_id,
       eta_minutes: bus.eta_to_stops[stopId],
     }))
     .sort((a, b) => a.eta_minutes - b.eta_minutes);
-
   res.json({ stop_id: stopId, arrivals });
+});
+
+// ─── Route Finder (BFS from DB) ───────────────────────────────────────────────
+app.get('/api/find-route', (req, res) => {
+  const fromId = parseInt(req.query.from);
+  const toId   = parseInt(req.query.to);
+  if (!fromId || !toId) return res.status(400).json({ error: 'Provide from and to stop_id params' });
+  if (fromId === toId)  return res.status(400).json({ error: 'Start and destination are the same' });
+
+  db.query(`
+    SELECT rs.route_id, rs.stop_id, rs.stop_sequence,
+           rs.travel_time_from_prev_mins, s.stop_name
+    FROM Route_Stop rs
+    JOIN Stop s ON rs.stop_id = s.stop_id
+    ORDER BY rs.route_id, rs.stop_sequence
+  `, (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+
+    const stopNames = {};
+    const graph     = {};
+    const byRoute   = {};
+
+    for (const row of rows) {
+      stopNames[row.stop_id] = row.stop_name;
+      if (!byRoute[row.route_id]) byRoute[row.route_id] = [];
+      byRoute[row.route_id].push(row);
+    }
+
+    for (const [routeId, stops] of Object.entries(byRoute)) {
+      for (let i = 1; i < stops.length; i++) {
+        const prev = stops[i - 1];
+        const curr = stops[i];
+        const time = curr.travel_time_from_prev_mins || 5;
+        if (!graph[prev.stop_id]) graph[prev.stop_id] = [];
+        if (!graph[curr.stop_id]) graph[curr.stop_id] = [];
+        graph[prev.stop_id].push({ stop_id: curr.stop_id, route_id: parseInt(routeId), travel_time: time });
+        graph[curr.stop_id].push({ stop_id: prev.stop_id, route_id: parseInt(routeId), travel_time: time });
+      }
+    }
+
+    if (!graph[fromId]) return res.status(404).json({ error: 'Start stop not found in any route' });
+    if (!graph[toId])   return res.status(404).json({ error: 'Destination stop not found in any route' });
+
+    const visited = new Set();
+    const queue   = [{ stop_id: fromId, path: [fromId], routeIds: [], totalMins: 0 }];
+    let found = null;
+
+    while (queue.length) {
+      const { stop_id, path, routeIds, totalMins } = queue.shift();
+      if (stop_id === toId) { found = { path, routeIds, totalMins }; break; }
+      if (visited.has(stop_id)) continue;
+      visited.add(stop_id);
+      for (const neighbor of (graph[stop_id] || [])) {
+        if (!visited.has(neighbor.stop_id)) {
+          queue.push({
+            stop_id:   neighbor.stop_id,
+            path:      [...path, neighbor.stop_id],
+            routeIds:  [...routeIds, neighbor.route_id],
+            totalMins: totalMins + neighbor.travel_time,
+          });
+        }
+      }
+    }
+
+    if (!found) return res.status(404).json({ error: 'No route found between these stops' });
+
+    const steps = found.path.map((stopId, i) => ({
+      stop_id:   stopId,
+      stop_name: stopNames[stopId] || `Stop ${stopId}`,
+      action:    i === 0 ? 'board' : i === found.path.length - 1 ? 'exit' : 'pass',
+      route_id:  found.routeIds[i] ?? null,
+    }));
+
+    const routeChanges = new Set(found.routeIds.filter(Boolean)).size;
+    res.json({
+      from:           stopNames[fromId],
+      to:             stopNames[toId],
+      total_stops:    found.path.length,
+      buses_required: routeChanges,
+      eta_minutes:    found.totalMins,
+      steps,
+    });
+  });
 });
 
 // ─── Start Server ─────────────────────────────────────────────────────────────

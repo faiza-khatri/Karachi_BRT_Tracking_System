@@ -107,6 +107,8 @@ const ROUTES = [
       ['Lea Market',       6],
       ['Korangi Crossing', 15],
       ['Korangi No.2',     7],
+      ['Malir Halt',       12],  // add this
+      ['Landhi',           10],  // add this
     ],
   },
   {
