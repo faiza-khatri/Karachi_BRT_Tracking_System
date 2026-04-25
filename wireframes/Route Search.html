@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Route Search</title>
+    <style>
+        :root { --main-red: #8B1A1A; --card-bg: #FFFFFF; }
+        body { font-family: sans-serif; background-color: #f8f8f8; margin: 0; }
+        header { background: var(--main-red); color: white; padding: 15px; text-align: center; font-weight: bold; }
+        .search-box { background: white; padding: 20px; border-bottom: 2px solid #ddd; }
+        .input-group { background: #eee; padding: 10px; border-radius: 8px; margin-bottom: 10px; display: flex; align-items: center; }
+        .search-btn { background: var(--main-red); color: white; border: none; width: 100%; padding: 12px; border-radius: 8px; font-weight: bold; }
+        .result-card { background: white; margin: 15px; padding: 15px; border-radius: 12px; border-left: 5px solid #007bff; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .fastest-tag { background: #007bff; color: white; font-size: 10px; padding: 3px 8px; border-radius: 4px; display: inline-block; margin-bottom: 5px; }
+    </style>
+</head>
+<body>
+    <header>ROUTE SEARCH</header>
+    <div class="search-box">
+        <div class="input-group">📍 Karachi's Jinnah International Airport</div>
+        <div style="text-align: center; color: var(--main-red); font-weight: bold;">⇅</div>
+        <div class="input-group">🏛️ Empress Market</div>
+        <button class="search-btn" onclick="window.location.href='/live-location'">Search Route</button>
+    </div>
+    <div class="result-card">
+        <span class="fastest-tag">FASTEST</span>
+        <div style="display: flex; justify-content: space-between; font-weight: bold;">
+            <span>Airport → Saddar</span>
+        </div>
+        <p style="font-size: 12px; color: #666;">EST. TOTAL TIME: 55 min</p>
+        <p style="font-size: 12px; color: #d9534f;">⚠️ Multi-bus switch required at Gulshan-e-Iqbal</p>
+    </div>
+</body>
+</html>

@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Red Bus Karachi - Admin System</title>
+    <style>
+        :root { --main-red: #8B1A1A; --bg-gray: #F2F2F2; --blue: #4682B4; }
+        body { font-family: 'Segoe UI', sans-serif; background-color: #f8f8f8; margin: 0; overflow-x: hidden; }
+        
+        /* Navigation & Screens */
+        .screen { display: none; width: 100%; min-height: 100vh; }
+        .active { display: block; }
+
+        /* Header Style */
+        header { 
+            background: var(--main-red); color: white; padding: 15px; 
+            display: flex; justify-content: space-between; align-items: center; font-weight: bold;
+        }
+
+        /* Login Screen Styles */
+        .login-container { height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; background: white; }
+        .login-card { width: 85%; max-width: 350px; text-align: center; }
+        input { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 8px; background: var(--bg-gray); box-sizing: border-box; }
+        .red-btn { width: 100%; padding: 14px; background: var(--main-red); color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; }
+
+        /* Dashboard Styles */
+        .container { padding: 20px; }
+        .route-card { 
+            display: flex; align-items: center; background: white; padding: 12px; 
+            margin-bottom: 10px; border-radius: 8px; border: 1px solid #ddd; 
+        }
+        .route-name { flex-grow: 1; font-weight: bold; }
+        .icon-btn { border: none; border-radius: 5px; cursor: pointer; color: white; padding: 8px; margin-left: 5px; }
+        .btn-edit { background: #607D8B; }
+        .btn-delete { background: var(--main-red); }
+
+        /* Station Editor Section */
+        #station-section { background: #fff; padding: 15px; border-radius: 12px; border: 2px solid var(--bg-gray); margin-top: 10px; }
+        .station-row { display: flex; gap: 5px; margin-bottom: 8px; }
+        .station-row input { margin: 0; }
+    </style>
+</head>
+<body>
+
+    <div id="login-screen" class="screen active">
+        <div class="login-container">
+            <div class="login-card">
+                <img src="https://cdn-icons-png.flaticon.com/512/3448/3448339.png" width="60" alt="Bus">
+                <h1 style="color: var(--main-red);">Red Bus Karachi<br><small style="color:#333; font-size:14px">Admin Panel</small></h1>
+                <input type="text" id="username" placeholder="Username (Type 'admin')">
+                <input type="password" id="password" placeholder="Password (Type '1234')">
+                <button class="red-btn" onclick="handleLogin()">Login</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="dashboard-screen" class="screen">
+        <header>
+            <span></span>
+            <span>ADMIN DASHBOARD</span>
+            <span onclick="showScreen('login-screen')" style="font-size: 12px; cursor:pointer">Logout</span>
+        </header>
+        <div class="container">
+            <button class="red-btn" style="background:#eee; color:#333; margin-bottom:20px" onclick="addRoute()">+ Add New Route</button>
+            <div id="route-list"></div>
+        </div>
+    </div>
+
+    <div id="manage-screen" class="screen">
+        <header>
+            <span onclick="showScreen('dashboard-screen')" style="cursor:pointer">❮ Back</span>
+            <span id="edit-header-title">STATIONS</span>
+            <span></span>
+        </header>
+        <div class="container">
+            <div id="station-section">
+                <h3 id="editing-route-name" style="color: var(--main-red); margin-top:0">RB1</h3>
+                <div id="station-list"></div>
+                <button class="red-btn" style="background:var(--blue); margin-top:10px" onclick="addStationRow()">+ Add Stop</button>
+            </div>
+            <button class="red-btn" style="margin-top:20px" onclick="saveAll()">Save All Changes</button>
+        </div>
+    </div>
+
+    <script>
+        // DATA MODEL
+        let busData = [
+            { id: 0, name: "RB1", stations: ["Airport", "Malir Halt", "Saddar"] },
+            { id: 1, name: "RB12", stations: ["Gulshan", "Nipa", "Civic Centre"] }
+        ];
+        let currentEditingId = null;
+
+        // NAVIGATION LOGIC
+        function showScreen(screenId) {
+            document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+            document.getElementById(screenId).classList.add('active');
+        }
+
+        // LOGIN INTERACTION
+        function handleLogin() {
+            const u = document.getElementById('username').value;
+            const p = document.getElementById('password').value;
+            if(u === "admin" && p === "1234") {
+                renderDashboard();
+                showScreen('dashboard-screen');
+            } else {
+                alert("Try admin / 1234");
+            }
+        }
+
+        // DASHBOARD INTERACTION
+        function renderDashboard() {
+            const list = document.getElementById('route-list');
+            list.innerHTML = "";
+            busData.forEach((route) => {
+                list.innerHTML += `
+                    <div class="route-card">
+                        <span class="route-name">${route.name}</span>
+                        <button class="icon-btn btn-edit" onclick="openStationEditor(${route.id})">Manage</button>
+                        <button class="icon-btn btn-delete" onclick="deleteRoute(${route.id})">🗑</button>
+                    </div>
+                `;
+            });
+        }
+
+        function addRoute() {
+            const name = prompt("Enter Route Name (e.g., RB15):");
+            if(name) {
+                const newId = busData.length > 0 ? busData[busData.length-1].id + 1 : 0;
+                busData.push({ id: newId, name: name, stations: ["Start Point", "End Point"] });
+                renderDashboard();
+            }
+        }
+
+        function deleteRoute(id) {
+            busData = busData.filter(r => r.id !== id);
+            renderDashboard();
+        }
+
+        // STATION EDITOR INTERACTION
+        function openStationEditor(id) {
+            currentEditingId = id;
+            const route = busData.find(r => r.id === id);
+            document.getElementById('editing-route-name').innerText = "Editing: " + route.name;
+            renderStations();
+            showScreen('manage-screen');
+        }
+
+        function renderStations() {
+            const list = document.getElementById('station-list');
+            list.innerHTML = "";
+            const route = busData.find(r => r.id === currentEditingId);
+            route.stations.forEach((st, idx) => {
+                list.innerHTML += `
+                    <div class="station-row">
+                        <input type="text" value="${st}" onchange="updateStationText(${idx}, this.value)">
+                        <button class="icon-btn btn-delete" onclick="removeStation(${idx})">×</button>
+                    </div>
+                `;
+            });
+        }
+
+        function addStationRow() {
+            const route = busData.find(r => r.id === currentEditingId);
+            route.stations.push("New Stop");
+            renderStations();
+        }
+
+        function updateStationText(idx, val) {
+            const route = busData.find(r => r.id === currentEditingId);
+            route.stations[idx] = val;
+        }
+
+        function removeStation(idx) {
+            const route = busData.find(r => r.id === currentEditingId);
+            route.stations.splice(idx, 1);
+            renderStations();
+        }
+
+        function saveAll() {
+            alert("Changes saved to memory! In a real app, this would update your SQL database.");
+            showScreen('dashboard-screen');
+        }
+    </script>
+</body>
+</html>
