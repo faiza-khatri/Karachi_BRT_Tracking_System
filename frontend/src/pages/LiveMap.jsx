@@ -1,373 +1,566 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { getBusPositions } from '../api';
 
-// Station layout positions on our schematic map (x%, y%)
-const STATION_POSITIONS = {
-  1: { x: 42, y: 60, name: 'Saddar' },
-  2: { x: 38, y: 80, name: 'Clifton' },
-  3: { x: 65, y: 45, name: 'Gulshan-e-Iqbal' },
-  4: { x: 70, y: 70, name: 'Korangi' },
-  5: { x: 82, y: 58, name: 'Landhi' },
-  6: { x: 55, y: 20, name: 'North Nazimabad' },
+// ── Add two new fetchers inline (or move to api.js if you prefer) ─────────────
+const BASE = 'http://localhost:5000/api';
+const getStops       = () => fetch(`${BASE}/stops`).then(r => r.json());
+const getArrivals    = (stopId) => fetch(`${BASE}/stop/${stopId}/arrivals`).then(r => r.json());
+
+// Route colours matching your backend routes
+const ROUTE_COLORS = {
+  'R-1':  '#ef4444',
+  'R-3':  '#f59e0b',
+  'R-6':  '#22c55e',
+  'K-4':  '#8b5cf6',
+  'P-1':  '#ec4899',
+  'EV-1': '#06b6d4',
 };
-
-// Route definitions: which stations connect, and what colour
-const ROUTE_LINES = [
-  { id: 1, name: 'R-1', color: '#ef4444', path: [1, 2, 4] },
-  { id: 2, name: 'R-2', color: '#f59e0b', path: [6, 3, 5] },
-  { id: 3, name: 'R-3', color: '#3b82f6', path: [1, 3, 4, 5] },
-];
-
-// Bus colors matching their routes
-const BUS_COLORS = { 1: '#ef4444', 2: '#f59e0b', 3: '#3b82f6' };
+// Fallback by route_id index
+const COLOR_PALETTE = ['#ef4444','#f59e0b','#22c55e','#8b5cf6','#ec4899','#06b6d4','#f97316'];
+const routeColor = (routeId) => COLOR_PALETTE[(routeId - 1) % COLOR_PALETTE.length];
 
 export default function LiveMap() {
-  const [positions, setPositions] = useState([]);
-  const [error, setError]         = useState('');
-  const [lastUpdate, setLastUpdate] = useState(null);
-  const [selected, setSelected]   = useState(null); // selected bus id
+  const mapRef        = useRef(null);   // leaflet map instance
+  const mapDivRef     = useRef(null);   // DOM node
+  const markersRef    = useRef({});     // busId → L.marker
+  const stopMarkersRef= useRef([]);     // stop circle markers
+  const LRef          = useRef(null);   // leaflet lib
 
+  const [positions,   setPositions]   = useState([]);
+  const [stops,       setStops]       = useState([]);
+  const [selectedBus, setSelectedBus] = useState(null);
+  const [selectedStop,setSelectedStop]= useState(null);
+  const [arrivals,    setArrivals]    = useState([]);
+  const [lastUpdate,  setLastUpdate]  = useState(null);
+  const [error,       setError]       = useState('');
+  const [mapReady,    setMapReady]    = useState(false);
+
+  // ── 1. Load Leaflet dynamically (no npm install needed if not present) ───────
+  useEffect(() => {
+    // Inject Leaflet CSS
+    if (!document.getElementById('leaflet-css')) {
+      const link = document.createElement('link');
+      link.id   = 'leaflet-css';
+      link.rel  = 'stylesheet';
+      link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+      document.head.appendChild(link);
+    }
+    // Inject Leaflet JS
+    if (window.L) { LRef.current = window.L; initMap(); return; }
+    const script = document.createElement('script');
+    script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+    script.onload = () => { LRef.current = window.L; initMap(); };
+    document.head.appendChild(script);
+  }, []);
+
+  function initMap() {
+    if (mapRef.current || !mapDivRef.current) return;
+    const L = LRef.current;
+
+    const map = L.map(mapDivRef.current, {
+      center: [24.9008, 67.0700], // Karachi centre
+      zoom:   12,
+      zoomControl: false,
+    });
+
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      attribution: '© OpenStreetMap © CARTO',
+      maxZoom: 19,
+    }).addTo(map);
+
+    L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+    mapRef.current = map;
+    setMapReady(true);
+  }
+
+  // ── 2. Load stops once map is ready ──────────────────────────────────────────
+  useEffect(() => {
+    if (!mapReady) return;
+    getStops().then(data => {
+      const stopList = data.stops || [];
+      setStops(stopList);
+      renderStopMarkers(stopList);
+    }).catch(() => setError('Could not load stops from server.'));
+  }, [mapReady]);
+
+  function renderStopMarkers(stopList) {
+    const L   = LRef.current;
+    const map = mapRef.current;
+    if (!L || !map) return;
+
+    // Clear old stop markers
+    stopMarkersRef.current.forEach(m => map.removeLayer(m));
+    stopMarkersRef.current = [];
+
+    stopList.forEach(stop => {
+      if (!stop.latitude || !stop.longitude) return;
+      const circle = L.circleMarker([stop.latitude, stop.longitude], {
+        radius:      6,
+        color:       '#fff',
+        weight:      1.5,
+        fillColor:   '#1e293b',
+        fillOpacity: 0.9,
+      }).addTo(map);
+
+      circle.bindTooltip(stop.stop_name, {
+        permanent:  false,
+        direction:  'top',
+        className:  'krb-tooltip',
+      });
+
+      circle.on('click', () => {
+        setSelectedStop(stop);
+        setSelectedBus(null);
+        getArrivals(stop.stop_id).then(d => setArrivals(d.arrivals || []));
+      });
+
+      stopMarkersRef.current.push(circle);
+    });
+  }
+
+  // ── 3. Bus icon factory ───────────────────────────────────────────────────────
+  function makeBusIcon(L, color, busNumber, isSelected) {
+    const size = isSelected ? 36 : 28;
+    const svg = `
+      <svg width="${size}" height="${size}" viewBox="0 0 36 36" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="18" cy="18" r="17" fill="${color}" opacity="${isSelected ? 1 : 0.85}" stroke="#fff" stroke-width="2"/>
+        ${isSelected ? `<circle cx="18" cy="18" r="17" fill="none" stroke="${color}" stroke-width="3" opacity="0.4">
+          <animate attributeName="r" from="17" to="26" dur="1.2s" repeatCount="indefinite"/>
+          <animate attributeName="opacity" from="0.4" to="0" dur="1.2s" repeatCount="indefinite"/>
+        </circle>` : ''}
+        <text x="18" y="22" text-anchor="middle" fill="#fff" font-size="9" font-weight="700" font-family="monospace">${busNumber.slice(-4)}</text>
+      </svg>`;
+    return L.divIcon({
+      html:        svg,
+      className:   '',
+      iconSize:    [size, size],
+      iconAnchor:  [size/2, size/2],
+    });
+  }
+
+  // ── 4. Fetch & update bus positions every 3s ──────────────────────────────────
   const fetchPositions = async () => {
     try {
       const data = await getBusPositions();
       setPositions(data.positions || []);
       setLastUpdate(new Date());
       setError('');
+      updateBusMarkers(data.positions || []);
     } catch {
-      setError('Cannot connect to server. Make sure Node.js is running on port 5000.');
+      setError('Cannot reach server on port 5000.');
     }
   };
 
-  useEffect(() => {
-    fetchPositions();
-    const interval = setInterval(fetchPositions, 5000); // refresh every 5s
-    return () => clearInterval(interval);
-  }, []);
+  function updateBusMarkers(posList) {
+    const L   = LRef.current;
+    const map = mapRef.current;
+    if (!L || !map) return;
 
-  const selectedBus = positions.find(p => p.bus_id === selected);
+    const seen = new Set();
+
+    posList.forEach(bus => {
+      if (!bus.lat || !bus.lng) return;
+      seen.add(bus.bus_id);
+      const color    = routeColor(bus.route_id);
+      const isSelected = selectedBus?.bus_id === bus.bus_id;
+      const icon     = makeBusIcon(L, color, bus.bus_number, isSelected);
+      const latlng   = [bus.lat, bus.lng];
+
+      if (markersRef.current[bus.bus_id]) {
+        // Smooth move
+        markersRef.current[bus.bus_id].setLatLng(latlng);
+        markersRef.current[bus.bus_id].setIcon(icon);
+      } else {
+        const marker = L.marker(latlng, { icon, zIndexOffset: 1000 }).addTo(map);
+        marker.on('click', () => {
+          setSelectedBus(bus);
+          setSelectedStop(null);
+          setArrivals([]);
+        });
+        markersRef.current[bus.bus_id] = marker;
+      }
+
+      // Tooltip
+      markersRef.current[bus.bus_id].bindTooltip(
+        `<b>${bus.bus_number}</b><br/>At: ${bus.current_stop_name}<br/>Next: ${bus.next_stop_name || '—'}`,
+        { className: 'krb-tooltip', direction: 'top' }
+      );
+    });
+
+    // Remove stale markers
+    Object.keys(markersRef.current).forEach(id => {
+      if (!seen.has(parseInt(id))) {
+        map.removeLayer(markersRef.current[id]);
+        delete markersRef.current[id];
+      }
+    });
+  }
+
+  useEffect(() => {
+    if (!mapReady) return;
+    fetchPositions();
+    const interval = setInterval(fetchPositions, 3000);
+    return () => clearInterval(interval);
+  }, [mapReady, selectedBus]);
+
+  // ── 5. Re-render arrivals when selected stop changes ─────────────────────────
+  useEffect(() => {
+    if (!selectedStop) return;
+    const interval = setInterval(() => {
+      getArrivals(selectedStop.stop_id).then(d => setArrivals(d.arrivals || []));
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [selectedStop]);
 
   return (
     <>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;500;600&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@400;500;600&display=swap');
         * { margin:0; padding:0; box-sizing:border-box; }
 
-        .lm-page {
-          min-height: 100vh;
-          background: #0c0c0f;
+        .krb-root {
+          height: 100vh; width: 100vw;
+          display: flex; flex-direction: column;
+          background: #080b12;
           font-family: 'DM Sans', sans-serif;
-          color: #fff;
-          display: flex;
-          flex-direction: column;
-        }
-
-        /* Header */
-        .lm-header {
-          display: flex; justify-content: space-between; align-items: center;
-          padding: 1.1rem 2rem;
-          border-bottom: 1px solid rgba(255,255,255,0.06);
-          background: rgba(12,12,15,0.95);
-          position: sticky; top: 0; z-index: 10;
-          backdrop-filter: blur(10px);
-        }
-        .lm-logo {
-          font-family: 'Bebas Neue', sans-serif;
-          font-size: 1.4rem; letter-spacing: 0.05em;
-          display: flex; align-items: center; gap: 0.5rem;
-        }
-        .lm-logo .red { color: #ef4444; }
-        .nav-links { display: flex; gap: 0.5rem; }
-        .nav-link {
-          color: rgba(255,255,255,0.45); text-decoration: none;
-          font-size: 0.83rem; padding: 0.4rem 0.9rem;
-          border-radius: 20px; border: 1px solid rgba(255,255,255,0.1);
-          transition: all 0.2s;
-        }
-        .nav-link:hover { color: #fff; border-color: rgba(255,255,255,0.25); }
-
-        /* Live badge */
-        .live-badge {
-          display: inline-flex; align-items: center; gap: 0.4rem;
-          background: rgba(239,68,68,0.1);
-          border: 1px solid rgba(239,68,68,0.3);
-          border-radius: 20px; padding: 0.3rem 0.75rem;
-          font-size: 0.78rem; color: #ef4444; font-weight: 600;
-        }
-        .live-dot {
-          width: 7px; height: 7px; border-radius: 50%;
-          background: #ef4444;
-          animation: pulse 1.5s ease-in-out infinite;
-        }
-        @keyframes pulse {
-          0%,100% { opacity:1; transform: scale(1); }
-          50%      { opacity:0.4; transform: scale(0.7); }
-        }
-
-        /* Main layout */
-        .lm-body {
-          flex: 1;
-          display: grid;
-          grid-template-columns: 1fr 300px;
-          gap: 0;
-          max-height: calc(100vh - 60px);
-        }
-        @media (max-width: 800px) {
-          .lm-body { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
-          .lm-sidebar { max-height: 280px; overflow-y: auto; }
-        }
-
-        /* Map */
-        .lm-map-wrap {
-          position: relative;
-          background:
-            radial-gradient(ellipse at 30% 50%, rgba(185,28,28,0.06) 0%, transparent 60%),
-            radial-gradient(ellipse at 70% 30%, rgba(59,130,246,0.05) 0%, transparent 60%),
-            #0c0c0f;
+          color: #e2e8f0;
           overflow: hidden;
         }
 
-        /* Map header */
-        .map-header {
-          position: absolute; top: 1.5rem; left: 1.5rem; z-index: 5;
+        /* ── Header ── */
+        .krb-header {
+          display: flex; align-items: center; justify-content: space-between;
+          padding: 0.75rem 1.5rem;
+          background: rgba(8,11,18,0.95);
+          border-bottom: 1px solid rgba(255,255,255,0.07);
+          backdrop-filter: blur(12px);
+          z-index: 1000; flex-shrink: 0;
         }
-        .map-title {
-          font-family: 'Bebas Neue', sans-serif;
-          font-size: 1.8rem; letter-spacing: 0.05em;
-          line-height: 1;
+        .krb-logo {
+          font-family: 'Space Mono', monospace;
+          font-size: 1rem; font-weight: 700;
+          letter-spacing: 0.05em;
+          display: flex; align-items: center; gap: 0.5rem;
         }
-        .map-sub {
-          font-size: 0.78rem; color: rgba(255,255,255,0.35);
-          margin-top: 0.2rem;
+        .krb-logo .red { color: #ef4444; }
+        .krb-badge {
+          display: flex; align-items: center; gap: 0.4rem;
+          background: rgba(239,68,68,0.1);
+          border: 1px solid rgba(239,68,68,0.25);
+          border-radius: 20px; padding: 0.25rem 0.65rem;
+          font-size: 0.72rem; font-weight: 700;
+          color: #ef4444; letter-spacing: 0.08em;
+        }
+        .krb-dot {
+          width: 6px; height: 6px; border-radius: 50%;
+          background: #ef4444;
+          animation: blink 1.4s ease-in-out infinite;
+        }
+        @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
+        .krb-nav { display: flex; gap: 0.5rem; }
+        .krb-navlink {
+          color: rgba(255,255,255,0.4); text-decoration: none;
+          font-size: 0.8rem; padding: 0.35rem 0.8rem;
+          border-radius: 6px; border: 1px solid rgba(255,255,255,0.08);
+          transition: all 0.15s;
+        }
+        .krb-navlink:hover { color:#fff; border-color:rgba(255,255,255,0.2); }
+
+        /* ── Body ── */
+        .krb-body {
+          flex: 1; display: flex; min-height: 0;
         }
 
-        .map-svg {
+        /* ── Map ── */
+        .krb-map {
+          flex: 1; position: relative;
+        }
+        .krb-map-el {
           width: 100%; height: 100%;
-          min-height: 400px;
+        }
+        .krb-map-loading {
+          position: absolute; inset: 0;
+          display: flex; align-items: center; justify-content: center;
+          background: #080b12; z-index: 5;
+          font-family: 'Space Mono', monospace;
+          font-size: 0.85rem; color: rgba(255,255,255,0.3);
+          letter-spacing: 0.1em;
+        }
+        .krb-timestamp {
+          position: absolute; bottom: 1rem; left: 1rem; z-index: 500;
+          font-size: 0.72rem; color: rgba(255,255,255,0.25);
+          font-family: 'Space Mono', monospace;
+          background: rgba(8,11,18,0.7);
+          padding: 0.3rem 0.6rem; border-radius: 4px;
+          pointer-events: none;
+        }
+        .krb-error {
+          position: absolute; top: 1rem; left: 50%; transform: translateX(-50%);
+          z-index: 600;
+          background: rgba(185,28,28,0.9); border: 1px solid #ef4444;
+          border-radius: 6px; padding: 0.5rem 1rem;
+          font-size: 0.8rem; color: #fca5a5;
         }
 
-        /* Station node */
-        .station-node { cursor: pointer; }
-        .station-node circle { transition: r 0.2s; }
-        .station-node:hover circle { r: 12; }
-        .station-label { font-family: 'DM Sans', sans-serif; pointer-events: none; }
-
-        /* Bus marker */
-        .bus-marker {
-          cursor: pointer;
-          transition: transform 0.5s ease;
-          animation: busAppear 0.3s ease;
-        }
-        @keyframes busAppear {
-          from { opacity:0; transform: scale(0.5); }
-          to   { opacity:1; transform: scale(1); }
-        }
-
-        /* Refresh time */
-        .refresh-info {
-          position: absolute; bottom: 1rem; left: 1.5rem;
-          font-size: 0.75rem; color: rgba(255,255,255,0.2);
-        }
-
-        /* Sidebar */
-        .lm-sidebar {
+        /* ── Sidebar ── */
+        .krb-sidebar {
+          width: 300px; flex-shrink: 0;
+          background: #0d1117;
           border-left: 1px solid rgba(255,255,255,0.06);
-          background: rgba(255,255,255,0.02);
-          padding: 1.5rem;
-          overflow-y: auto;
+          display: flex; flex-direction: column;
+          overflow: hidden;
         }
-        .sidebar-title {
-          font-size: 0.7rem; font-weight: 700; letter-spacing: 0.1em;
-          text-transform: uppercase; color: rgba(255,255,255,0.3);
-          margin-bottom: 1rem;
+        .krb-sidebar-tabs {
+          display: flex; border-bottom: 1px solid rgba(255,255,255,0.06);
+        }
+        .krb-tab {
+          flex: 1; padding: 0.75rem;
+          font-size: 0.75rem; font-weight: 600;
+          letter-spacing: 0.06em; text-transform: uppercase;
+          color: rgba(255,255,255,0.3);
+          cursor: pointer; border: none; background: none;
+          border-bottom: 2px solid transparent;
+          transition: all 0.15s;
+        }
+        .krb-tab.active { color: #ef4444; border-bottom-color: #ef4444; }
+
+        .krb-sidebar-body { flex: 1; overflow-y: auto; padding: 1rem; }
+        .krb-sidebar-body::-webkit-scrollbar { width: 4px; }
+        .krb-sidebar-body::-webkit-scrollbar-track { background: transparent; }
+        .krb-sidebar-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius:2px; }
+
+        .krb-section-label {
+          font-size: 0.68rem; font-weight: 700;
+          letter-spacing: 0.12em; text-transform: uppercase;
+          color: rgba(255,255,255,0.25);
+          margin-bottom: 0.75rem;
         }
 
-        /* Legend */
-        .legend { margin-bottom: 1.5rem; }
-        .legend-item {
-          display: flex; align-items: center; gap: 0.6rem;
-          padding: 0.5rem 0;
-          border-bottom: 1px solid rgba(255,255,255,0.04);
-        }
-        .legend-line {
-          width: 28px; height: 3px; border-radius: 2px; flex-shrink: 0;
-        }
-        .legend-name { font-size: 0.85rem; font-weight: 600; }
-        .legend-desc { font-size: 0.75rem; color: rgba(255,255,255,0.35); }
-
-        /* Bus cards */
-        .bus-card {
+        /* ── Bus cards ── */
+        .krb-bus-card {
           background: rgba(255,255,255,0.03);
           border: 1px solid rgba(255,255,255,0.07);
-          border-radius: 10px;
-          padding: 0.9rem;
-          margin-bottom: 0.6rem;
-          cursor: pointer;
-          transition: all 0.2s;
+          border-radius: 8px; padding: 0.8rem;
+          margin-bottom: 0.5rem; cursor: pointer;
+          transition: all 0.15s;
         }
-        .bus-card:hover { background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.15); }
-        .bus-card.selected { border-color: #ef4444; background: rgba(239,68,68,0.07); }
+        .krb-bus-card:hover { background: rgba(255,255,255,0.06); }
+        .krb-bus-card.active { border-color: #ef4444; background: rgba(239,68,68,0.06); }
+        .krb-bus-top {
+          display: flex; justify-content: space-between;
+          align-items: center; margin-bottom: 0.35rem;
+        }
+        .krb-bus-num {
+          font-family: 'Space Mono', monospace;
+          font-size: 0.85rem; font-weight: 700;
+        }
+        .krb-bus-pip {
+          width: 9px; height: 9px; border-radius: 50%;
+        }
+        .krb-bus-loc { font-size: 0.78rem; color: rgba(255,255,255,0.5); margin-bottom: 0.2rem; }
+        .krb-bus-next { font-size: 0.73rem; color: rgba(255,255,255,0.3); }
+        .krb-bus-prog {
+          height: 2px; background: rgba(255,255,255,0.07);
+          border-radius: 2px; margin-top: 0.5rem; overflow: hidden;
+        }
+        .krb-bus-prog-fill {
+          height: 100%; border-radius: 2px;
+          transition: width 1s linear;
+        }
 
-        .bus-card-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.3rem; }
-        .bus-number { font-weight: 700; font-size: 0.92rem; }
-        .bus-dot { width: 10px; height: 10px; border-radius: 50%; }
-        .bus-location { font-size: 0.8rem; color: rgba(255,255,255,0.45); }
-        .bus-route-tag {
-          font-size: 0.7rem; color: rgba(255,255,255,0.3);
-          margin-top: 0.2rem;
+        /* ── Detail panel ── */
+        .krb-detail {
+          background: rgba(255,255,255,0.02);
+          border: 1px solid rgba(255,255,255,0.07);
+          border-radius: 8px; padding: 0.9rem;
+          margin-bottom: 1rem;
         }
+        .krb-detail-title {
+          font-family: 'Space Mono', monospace;
+          font-size: 0.9rem; font-weight: 700;
+          margin-bottom: 0.15rem;
+        }
+        .krb-detail-sub { font-size: 0.75rem; color: rgba(255,255,255,0.4); margin-bottom: 0.75rem; }
+        .krb-detail-row {
+          display: flex; justify-content: space-between;
+          font-size: 0.78rem; padding: 0.3rem 0;
+          border-bottom: 1px solid rgba(255,255,255,0.04);
+          color: rgba(255,255,255,0.6);
+        }
+        .krb-detail-row:last-child { border-bottom: none; }
+        .krb-detail-row span:last-child { color: #e2e8f0; font-weight: 600; }
 
-        .error-box {
-          background: rgba(185,28,28,0.1); border: 1px solid rgba(185,28,28,0.3);
-          border-radius: 8px; padding: 0.75rem; font-size: 0.82rem;
-          color: #fca5a5; margin-bottom: 1rem;
+        /* ── Arrivals ── */
+        .krb-arrival {
+          display: flex; align-items: center;
+          gap: 0.75rem; padding: 0.6rem 0;
+          border-bottom: 1px solid rgba(255,255,255,0.04);
         }
-        .empty-msg {
+        .krb-arrival:last-child { border-bottom: none; }
+        .krb-arrival-eta {
+          font-family: 'Space Mono', monospace;
+          font-size: 0.8rem; font-weight: 700;
+          color: #22c55e; min-width: 40px;
+        }
+        .krb-arrival-eta.soon { color: #ef4444; }
+        .krb-arrival-info { flex: 1; }
+        .krb-arrival-bus { font-size: 0.82rem; font-weight: 600; }
+        .krb-arrival-route { font-size: 0.72rem; color: rgba(255,255,255,0.35); }
+
+        .krb-empty {
           text-align: center; color: rgba(255,255,255,0.2);
-          font-size: 0.85rem; padding: 1.5rem 0;
+          font-size: 0.82rem; padding: 2rem 0;
+        }
+
+        /* ── Leaflet tooltip override ── */
+        .krb-tooltip {
+          background: rgba(13,17,23,0.95) !important;
+          border: 1px solid rgba(255,255,255,0.12) !important;
+          color: #e2e8f0 !important;
+          font-family: 'DM Sans', sans-serif !important;
+          font-size: 0.78rem !important;
+          padding: 0.35rem 0.6rem !important;
+          border-radius: 5px !important;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.5) !important;
+        }
+        .krb-tooltip::before { display: none !important; }
+
+        /* ── Legend ── */
+        .krb-legend-item {
+          display: flex; align-items: center;
+          gap: 0.6rem; padding: 0.4rem 0;
+          border-bottom: 1px solid rgba(255,255,255,0.04);
+          font-size: 0.8rem;
+        }
+        .krb-legend-swatch {
+          width: 24px; height: 3px; border-radius: 2px; flex-shrink: 0;
+        }
+
+        @media (max-width: 700px) {
+          .krb-sidebar { width: 100%; max-height: 260px; border-left: none; border-top: 1px solid rgba(255,255,255,0.06); }
+          .krb-body { flex-direction: column; }
         }
       `}</style>
 
-      <div className="lm-page">
-        <header className="lm-header">
-          <div className="lm-logo">🚌 Karachi <span className="red">Red</span> Bus</div>
-          <div className="nav-links">
-            <div className="live-badge"><div className="live-dot" /> Live</div>
-            <a href="/" className="nav-link">Route Finder</a>
-            <a href="/login" className="nav-link">Admin →</a>
+      <div className="krb-root">
+        {/* Header */}
+        <header className="krb-header">
+          <div className="krb-logo">🚌 Karachi <span className="red">Red</span> Bus</div>
+          <div style={{ display:'flex', alignItems:'center', gap:'0.75rem' }}>
+            <div className="krb-badge"><div className="krb-dot"/>LIVE</div>
+            <nav className="krb-nav">
+              <a href="/" className="krb-navlink">Route Finder</a>
+              <a href="/login" className="krb-navlink">Admin →</a>
+            </nav>
           </div>
         </header>
 
-        <div className="lm-body">
-          {/* ── Map ── */}
-          <div className="lm-map-wrap">
-            <div className="map-header">
-              <div className="map-title">Live Bus Map</div>
-              <div className="map-sub">Karachi Red Bus Network · Simulated positions</div>
+        <div className="krb-body">
+          {/* Map */}
+          <div className="krb-map">
+            {!mapReady && (
+              <div className="krb-map-loading">LOADING MAP…</div>
+            )}
+            {error && <div className="krb-error">⚠ {error}</div>}
+            <div ref={mapDivRef} className="krb-map-el" />
+            {lastUpdate && (
+              <div className="krb-timestamp">
+                Updated {lastUpdate.toLocaleTimeString()} · refreshes every 3s
+              </div>
+            )}
+          </div>
+
+          {/* Sidebar */}
+          <aside className="krb-sidebar">
+            <div className="krb-sidebar-tabs">
+              <button className="krb-tab active">Buses & Stops</button>
             </div>
+            <div className="krb-sidebar-body">
 
-            <svg className="map-svg" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">
-              {/* Grid lines for atmosphere */}
-              {[20,40,60,80].map(v => (
-                <g key={v}>
-                  <line x1={v} y1="0" x2={v} y2="100" stroke="rgba(255,255,255,0.03)" strokeWidth="0.2" />
-                  <line x1="0" y1={v} x2="100" y2={v} stroke="rgba(255,255,255,0.03)" strokeWidth="0.2" />
-                </g>
-              ))}
+              {/* Selected bus detail */}
+              {selectedBus && (
+                <>
+                  <div className="krb-section-label">Selected Bus</div>
+                  <div className="krb-detail" style={{ borderColor: `${routeColor(selectedBus.route_id)}44` }}>
+                    <div className="krb-detail-title">{selectedBus.bus_number}</div>
+                    <div className="krb-detail-sub">Route ID {selectedBus.route_id}</div>
+                    <div className="krb-detail-row"><span>At stop</span><span>{selectedBus.current_stop_name}</span></div>
+                    <div className="krb-detail-row"><span>Next stop</span><span>{selectedBus.next_stop_name || '—'}</span></div>
+                    <div className="krb-detail-row"><span>Direction</span><span>{selectedBus.direction}</span></div>
+                    <div className="krb-detail-row"><span>Progress</span><span>{selectedBus.progress_pct}%</span></div>
+                  </div>
+                </>
+              )}
 
-              {/* Route lines */}
-              {ROUTE_LINES.map(route => (
-                <g key={route.id}>
-                  {route.path.slice(0,-1).map((stId, i) => {
-                    const a = STATION_POSITIONS[stId];
-                    const b = STATION_POSITIONS[route.path[i+1]];
-                    return (
-                      <line key={i}
-                        x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-                        stroke={route.color} strokeWidth="0.6"
-                        strokeOpacity="0.5" strokeDasharray="none"
-                      />
-                    );
-                  })}
-                </g>
-              ))}
+              {/* Selected stop arrivals */}
+              {selectedStop && (
+                <>
+                  <div className="krb-section-label">📍 {selectedStop.stop_name}</div>
+                  <div className="krb-detail">
+                    <div className="krb-detail-title">{selectedStop.stop_name}</div>
+                    <div className="krb-detail-sub">{selectedStop.landmark}</div>
+                    {arrivals.length === 0
+                      ? <div className="krb-empty">No buses arriving soon</div>
+                      : arrivals.map(a => (
+                          <div key={a.bus_id} className="krb-arrival">
+                            <div className={`krb-arrival-eta ${a.eta_minutes <= 3 ? 'soon' : ''}`}>
+                              {a.eta_minutes === 0 ? 'NOW' : `${a.eta_minutes}m`}
+                            </div>
+                            <div className="krb-arrival-info">
+                              <div className="krb-arrival-bus">{a.bus_number}</div>
+                              <div className="krb-arrival-route">Route {a.route_id}</div>
+                            </div>
+                            <div style={{ width:9, height:9, borderRadius:'50%', background: routeColor(a.route_id), flexShrink:0 }}/>
+                          </div>
+                        ))
+                    }
+                  </div>
+                </>
+              )}
 
-              {/* Station nodes */}
-              {Object.entries(STATION_POSITIONS).map(([id, st]) => (
-                <g key={id} className="station-node">
-                  <circle cx={st.x} cy={st.y} r="2" fill="#0c0c0f" stroke="rgba(255,255,255,0.5)" strokeWidth="0.4" />
-                  <circle cx={st.x} cy={st.y} r="1" fill="rgba(255,255,255,0.7)" />
-                  <text
-                    x={st.x + (st.x > 60 ? -3 : 3)}
-                    y={st.y - 3}
-                    fontSize="2.2"
-                    fill="rgba(255,255,255,0.7)"
-                    textAnchor={st.x > 60 ? 'end' : 'start'}
-                    className="station-label"
-                  >
-                    {st.name}
-                  </text>
-                </g>
-              ))}
-
-              {/* Bus markers */}
+              {/* Active buses list */}
+              <div className="krb-section-label" style={{ marginTop: selectedBus || selectedStop ? '1rem' : 0 }}>
+                Active Buses ({positions.length})
+              </div>
+              {positions.length === 0 && !error && (
+                <div className="krb-empty">Connecting to server…</div>
+              )}
               {positions.map(bus => {
-                const st = STATION_POSITIONS[bus.station_id];
-                if (!st) return null;
-                const color = BUS_COLORS[bus.bus_id] || '#fff';
-                const isSelected = selected === bus.bus_id;
-                // Offset buses slightly so they don't overlap at same station
-                const offset = (bus.bus_id - 2) * 2.5;
+                const color = routeColor(bus.route_id);
                 return (
-                  <g key={bus.bus_id}
-                    className="bus-marker"
-                    transform={`translate(${st.x + offset}, ${st.y - 5})`}
-                    onClick={() => setSelected(isSelected ? null : bus.bus_id)}
+                  <div
+                    key={bus.bus_id}
+                    className={`krb-bus-card ${selectedBus?.bus_id === bus.bus_id ? 'active' : ''}`}
+                    onClick={() => { setSelectedBus(bus); setSelectedStop(null); setArrivals([]); }}
                   >
-                    <circle r={isSelected ? 4 : 3} fill={color} opacity="0.25" />
-                    <circle r={isSelected ? 2.5 : 2} fill={color} />
-                    <text x="0" y="-3.5" fontSize="2" fill="#fff" textAnchor="middle" fontWeight="bold">
-                      {bus.bus_number}
-                    </text>
-                    {isSelected && (
-                      <circle r="5" fill="none" stroke={color} strokeWidth="0.5" opacity="0.6">
-                        <animate attributeName="r" from="3" to="7" dur="1s" repeatCount="indefinite" />
-                        <animate attributeName="opacity" from="0.6" to="0" dur="1s" repeatCount="indefinite" />
-                      </circle>
+                    <div className="krb-bus-top">
+                      <div className="krb-bus-num">{bus.bus_number}</div>
+                      <div className="krb-bus-pip" style={{ background: color }} />
+                    </div>
+                    <div className="krb-bus-loc">📍 {bus.current_stop_name}</div>
+                    {bus.next_stop_name && (
+                      <div className="krb-bus-next">→ {bus.next_stop_name}</div>
                     )}
-                  </g>
+                    <div className="krb-bus-prog">
+                      <div className="krb-bus-prog-fill"
+                        style={{ width: `${bus.progress_pct || 0}%`, background: color }} />
+                    </div>
+                  </div>
                 );
               })}
-            </svg>
 
-            {lastUpdate && (
-              <div className="refresh-info">
-                Last updated {lastUpdate.toLocaleTimeString()} · refreshes every 5s
-              </div>
-            )}
-          </div>
-
-          {/* ── Sidebar ── */}
-          <div className="lm-sidebar">
-            {error && <div className="error-box">{error}</div>}
-
-            <div className="sidebar-title">Route Legend</div>
-            <div className="legend">
-              {ROUTE_LINES.map(r => (
-                <div key={r.id} className="legend-item">
-                  <div className="legend-line" style={{ background: r.color }} />
-                  <div>
-                    <div className="legend-name">{r.name}</div>
-                    <div className="legend-desc">{r.path.map(id => STATION_POSITIONS[id]?.name).join(' → ')}</div>
-                  </div>
+              {/* Route legend */}
+              <div className="krb-section-label" style={{ marginTop:'1.5rem' }}>Route Legend</div>
+              {Object.entries(ROUTE_COLORS).map(([code, color]) => (
+                <div key={code} className="krb-legend-item">
+                  <div className="krb-legend-swatch" style={{ background: color }} />
+                  <span style={{ fontWeight:600, fontSize:'0.82rem' }}>{code}</span>
                 </div>
               ))}
+
             </div>
-
-            <div className="sidebar-title">Active Buses</div>
-            {positions.length === 0 && !error && (
-              <div className="empty-msg">Connecting to server…</div>
-            )}
-            {positions.map(bus => (
-              <div key={bus.bus_id}
-                className={`bus-card ${selected === bus.bus_id ? 'selected' : ''}`}
-                onClick={() => setSelected(selected === bus.bus_id ? null : bus.bus_id)}
-              >
-                <div className="bus-card-top">
-                  <div className="bus-number">🚌 {bus.bus_number}</div>
-                  <div className="bus-dot" style={{ background: BUS_COLORS[bus.bus_id] || '#fff' }} />
-                </div>
-                <div className="bus-location">📍 {bus.station_name}</div>
-                <div className="bus-route-tag">Route ID: {bus.route_id}</div>
-              </div>
-            ))}
-
-            <div className="sidebar-title" style={{ marginTop: '1.5rem' }}>Stations</div>
-            {Object.entries(STATION_POSITIONS).map(([id, st]) => (
-              <div key={id} style={{ padding: '0.4rem 0', borderBottom: '1px solid rgba(255,255,255,0.04)', fontSize: '0.83rem', color: 'rgba(255,255,255,0.5)' }}>
-                {st.name}
-              </div>
-            ))}
-          </div>
+          </aside>
         </div>
       </div>
     </>
