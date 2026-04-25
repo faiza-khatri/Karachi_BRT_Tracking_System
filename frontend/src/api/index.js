@@ -3,7 +3,7 @@
 // When you add the Vite proxy (vite.config.js), change BASE_URL to '/api'
 
 // const BASE_URL = 'http://localhost:5000/api';
-const BASE_URL = 'https://karachibrt-n8yduxi8.b4a.run/api';
+const BASE_URL = 'http://localhost:5000/api';
 
 // ─── AUTH ────────────────────────────────────────────────────────────────────
 
