@@ -1,4 +1,5 @@
-const BASE = 'http://localhost:5000/api';
+// const BASE = 'http://localhost:5000/api';
+const BASE = 'https://karachibrt-n8yduxi8.b4a.run/api';
 
 const token = () => localStorage.getItem('adminToken');
 
