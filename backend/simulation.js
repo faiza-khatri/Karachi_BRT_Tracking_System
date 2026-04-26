@@ -293,11 +293,18 @@ function getLivePositionsMemory() {
   }).filter(Boolean);
 }
 
+async function reloadBuses() {
+  await loadRouteData();   // reload routes too in case new stops were added
+  await loadBusStates();
+  console.log(`🔄 Simulation reloaded: ${Object.keys(busStates).length} buses`);
+}
+
 module.exports = {
   startSimulation,
   stopSimulation,
   getLivePositions: getLivePositionsMemory,   // fast, in-memory
   getLivePositionsFromDb,                      // accurate, from DB (real GPS equivalent)
+  reloadBuses, 
   routes,
   busStates,
 };

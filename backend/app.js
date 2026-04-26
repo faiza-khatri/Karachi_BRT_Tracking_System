@@ -133,6 +133,16 @@ app.get('/api/routes', requireAuth, (req, res) => {
   );
 });
 
+// protected so only admin can trigger it
+app.post('/api/simulation/reload', requireAuth, async (req, res) => {
+  try {
+    await simulation.reloadBuses();
+    res.json({ success: true, buses: Object.keys(simulation.busStates).length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/routes', requireAuth, (req, res) => {
   const { route_code, start_point, end_point, category } = req.body;
   db.query(
@@ -146,12 +156,23 @@ app.post('/api/routes', requireAuth, (req, res) => {
 });
 
 app.delete('/api/routes/:id', requireAuth, (req, res) => {
-  // Delete route_stops first (FK constraint)
-  db.query('DELETE FROM Route_Stop WHERE route_id = ?', [req.params.id], (err) => {
+  const id = req.params.id;
+  // Must delete in FK dependency order:
+  // 1. Simulated_Bus_Status references Bus
+  // 2. Bus references Route
+  // 3. Route_Stop references Route
+  // 4. Then Route itself
+  db.query('DELETE sbs FROM Simulated_Bus_Status sbs JOIN Bus b ON sbs.bus_id = b.bus_id WHERE b.route_id = ?', [id], (err) => {
     if (err) return res.status(500).json({ error: err.message });
-    db.query('DELETE FROM Route WHERE route_id = ?', [req.params.id], (err2) => {
+    db.query('DELETE FROM Bus WHERE route_id = ?', [id], (err2) => {
       if (err2) return res.status(500).json({ error: err2.message });
-      res.json({ success: true });
+      db.query('DELETE FROM Route_Stop WHERE route_id = ?', [id], (err3) => {
+        if (err3) return res.status(500).json({ error: err3.message });
+        db.query('DELETE FROM Route WHERE route_id = ?', [id], (err4) => {
+          if (err4) return res.status(500).json({ error: err4.message });
+          res.json({ success: true });
+        });
+      });
     });
   });
 });
