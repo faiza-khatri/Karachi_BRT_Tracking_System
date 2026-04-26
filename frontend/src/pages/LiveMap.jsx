@@ -21,6 +21,8 @@ export default function LiveMap() {
   const stopMarkersRef = useRef({});       // stopId → {circle, label}
   const polylineRefs   = useRef({});       // routeId → L.polyline
   const LRef           = useRef(null);
+  const routeLinesRef     = useRef([]);
+  const visibleRoutesRef  = useRef({});
 
   const [positions,     setPositions]     = useState([]);
   const [routeLines,    setRouteLines]    = useState([]);
@@ -32,8 +34,11 @@ export default function LiveMap() {
   const [error,         setError]        = useState('');
   const [mapReady,      setMapReady]     = useState(false);
   const [activeTab,     setActiveTab]    = useState('buses');
+  routeLinesRef.current    = routeLines;
+  visibleRoutesRef.current = visibleRoutes;
 
   // ── 1. Load Leaflet ──────────────────────────────────────────────────────────
+  // ── 1. Load Leaflet script ───────────────────────────────────────────────────
   useEffect(() => {
     if (!document.getElementById('leaflet-css')) {
       const link = document.createElement('link');
@@ -41,17 +46,58 @@ export default function LiveMap() {
       link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
       document.head.appendChild(link);
     }
-    if (window.L) { LRef.current = window.L; initMap(); return; }
+    if (window.L) {
+      LRef.current = window.L;
+      return;
+    }
     const script = document.createElement('script');
+    script.id = 'leaflet-js';
     script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-    script.onload = () => { LRef.current = window.L; initMap(); };
+    script.onload = () => { LRef.current = window.L; };
     document.head.appendChild(script);
   }, []);
 
+  // ── 2. Init map only after container is painted ──────────────────────────────
+  useEffect(() => {
+    if (mapRef.current) return; // already initialized
+    if (!mapDivRef.current) return;
+
+    const tryInit = () => {
+      if (!window.L) { setTimeout(tryInit, 100); return; }
+      if (!mapDivRef.current) return;
+      if (mapDivRef.current.offsetWidth === 0) { setTimeout(tryInit, 100); return; }
+      if (mapRef.current) return;
+
+      LRef.current = window.L;
+      const L = LRef.current;
+      const map = L.map(mapDivRef.current, {
+        center: [24.8900, 67.0600],
+        zoom: 12,
+        zoomControl: false,
+      });
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution: '© OpenStreetMap © CARTO', maxZoom: 19,
+      }).addTo(map);
+      L.control.zoom({ position: 'bottomright' }).addTo(map);
+      mapRef.current = map;
+      setMapReady(true);
+    };
+
+    setTimeout(tryInit, 50);
+  }, []);
   function initMap() {
     if (mapRef.current || !mapDivRef.current) return;
+    
+    // Wait until the container actually has dimensions
+    const el = mapDivRef.current;
+    if (el.offsetWidth === 0 || el.offsetHeight === 0) {
+      // Retry in 100ms
+      setTimeout(initMap, 100);
+      return;
+    }
+
     const L = LRef.current;
-    const map = L.map(mapDivRef.current, {
+    const map = L.map(el, {
       center: [24.8900, 67.0600],
       zoom: 12,
       zoomControl: false,
@@ -66,28 +112,31 @@ export default function LiveMap() {
 
   // ── 2. Load routes + stops once map ready ─────────────────────────────────
   useEffect(() => {
-    if (!mapReady) return;
-
-    // Load stops for markers
-    getStops().then(data => {
-      renderStopMarkers(data.stops || []);
-    }).catch(e => console.error('Stops fetch failed:', e));
-
-    // Load route polylines
-    getAllRouteStops().then(data => {
-      const routes = data.routes || [];
-      setRouteLines(routes);
-      const vis = {};
-      routes.forEach(r => { vis[r.route_id] = true; });
-      setVisibleRoutes(vis);
-      drawRoutePolylines(routes, vis);
-    }).catch(e => console.error('Route lines fetch failed:', e));
+    if (!mapReady || !mapRef.current) return;
+    const timer = setTimeout(() => {
+      getStops()
+        .then(data => renderStopMarkers(data.stops || []))
+        .catch(e => console.error('Stops fetch failed:', e));
+      getAllRouteStops()
+        .then(data => {
+          const routes = data.routes || [];
+          setRouteLines(routes);
+          routeLinesRef.current = routes;
+          const vis = {};
+          routes.forEach(r => { vis[r.route_id] = true; });
+          setVisibleRoutes(vis);
+          visibleRoutesRef.current = vis;
+          drawRoutePolylines(routes, vis);
+        })
+        .catch(e => console.error('Route lines fetch failed:', e));
+    }, 100);
+    return () => clearTimeout(timer);
   }, [mapReady]);
 
   // ── 3. Draw route polylines ───────────────────────────────────────────────
   function drawRoutePolylines(routes, vis) {
     const L = LRef.current, map = mapRef.current;
-    if (!L || !map) return;
+    if (!L || !map || !routes.length) return;
     Object.values(polylineRefs.current).forEach(pl => {
       if (pl.decorator) map.removeLayer(pl.decorator);
       map.removeLayer(pl);
@@ -97,7 +146,7 @@ export default function LiveMap() {
     routes.forEach(route => {
       const color   = routeCodeColor(route.route_code);
       const latlngs = route.stops
-        .filter(s => s.lat && s.lng && isFinite(parseFloat(s.lat)) && isFinite(parseFloat(s.lng)))
+        .filter(s => s.lat != null && s.lng != null && isFinite(parseFloat(s.lat)) && isFinite(parseFloat(s.lng)) && parseFloat(s.lat) !== 0 && parseFloat(s.lng) !== 0)
         .map(s => [parseFloat(s.lat), parseFloat(s.lng)]);
       if (latlngs.length < 2) return;
 
@@ -124,25 +173,24 @@ export default function LiveMap() {
   // ── 4. Stop markers ────────────────────────────────────────────────────────
   function renderStopMarkers(stopList) {
     const L = LRef.current, map = mapRef.current;
-    if (!L || !map) return;
+    if (!L || !map || !stopList.length) return;
 
     // Clear old
     Object.values(stopMarkersRef.current).forEach(({ circle }) => map.removeLayer(circle));
     stopMarkersRef.current = {};
 
     stopList.forEach(stop => {
-      const lat = parseFloat(stop.latitude);
-      const lng = parseFloat(stop.longitude);
-      if (!isFinite(lat) || !isFinite(lng)) return;
+    const lat = parseFloat(stop.latitude);
+    const lng = parseFloat(stop.longitude);
+    if (!isFinite(lat) || !isFinite(lng) || lat === 0 || lng === 0) return;
 
-      // Outer ring
+    try {
       const circle = L.circleMarker([lat, lng], {
         radius: 5, color: 'rgba(255,255,255,0.6)', weight: 1.5,
         fillColor: '#0d1117', fillOpacity: 1,
         interactive: true,
       }).addTo(map);
 
-      // Inner dot
       L.circleMarker([lat, lng], {
         radius: 2, color: 'transparent', weight: 0,
         fillColor: 'rgba(255,255,255,0.5)', fillOpacity: 1,
@@ -160,7 +208,6 @@ export default function LiveMap() {
         setArrivals([]);
         setActiveTab('buses');
         getArrivals(stop.stop_id).then(d => setArrivals(d.arrivals || []));
-        // Highlight the clicked stop
         Object.values(stopMarkersRef.current).forEach(({ circle: c }) =>
           c.setStyle({ color: 'rgba(255,255,255,0.6)', fillColor: '#0d1117' })
         );
@@ -168,7 +215,10 @@ export default function LiveMap() {
       });
 
       stopMarkersRef.current[stop.stop_id] = { circle, stop };
-    });
+    } catch(e) {
+      console.warn(`Skipping stop ${stop.stop_name}:`, e.message);
+    }
+  });
   }
 
   // ── 5. Bus icon ────────────────────────────────────────────────────────────
@@ -199,13 +249,13 @@ export default function LiveMap() {
     posList.forEach(bus => {
       if (!bus.lat || !bus.lng) return;
       seen.add(bus.bus_id);
-      const color      = routeCodeColor(
-        routeLines.find(r => r.route_id === bus.route_id)?.route_code || ''
-      ) || routeColor(bus.route_id);
+      const color = routeCodeColor(
+      routeLinesRef.current.find(r => r.route_id === bus.route_id)?.route_code || ''
+        ) || routeColor(bus.route_id);
       const isSelected = selectedBus?.bus_id === bus.bus_id;
       const icon       = makeBusIcon(L, color, bus.bus_number, isSelected);
       const latlng     = [parseFloat(bus.lat), parseFloat(bus.lng)];
-      const isVisible  = visibleRoutes[bus.route_id] !== false;
+      const isVisible = visibleRoutesRef.current[bus.route_id] !== false;
 
       if (markersRef.current[bus.bus_id]) {
         markersRef.current[bus.bus_id].marker.setLatLng(latlng);
@@ -227,7 +277,7 @@ export default function LiveMap() {
 
       markersRef.current[bus.bus_id].bus = bus;
       markersRef.current[bus.bus_id].marker.bindTooltip(
-        `<b>${bus.bus_number}</b> · ${routeLines.find(r=>r.route_id===bus.route_id)?.route_code||''}` +
+        `<b>${bus.bus_number}</b> · ${routeLinesRef.current.find(r=>r.route_id===bus.route_id)?.route_code||''}` +
         `<br/>📍 ${bus.current_stop_name}` +
         `<br/>→ ${bus.next_stop_name || '—'}`,
         { className: 'krb-tooltip', direction: 'top' }
@@ -261,7 +311,7 @@ export default function LiveMap() {
     fetchPositions();
     const iv = setInterval(fetchPositions, 2000);
     return () => clearInterval(iv);
-  }, [mapReady, selectedBus, routeLines, visibleRoutes]);
+  }, [mapReady, selectedBus]);
 
   // ── 8. Arrivals refresh ───────────────────────────────────────────────────
   useEffect(() => {
@@ -323,8 +373,8 @@ export default function LiveMap() {
 
         .krb-body { flex:1; display:flex; width:100%; min-height:0; overflow:hidden; }
 
-        .krb-map { flex:1; position:relative; min-width:0; }
-        .krb-map-el { width:100%; height:100%; }
+        .krb-map { flex:1; position:relative; min-width:0; min-height:0; }
+        .krb-map-el { width:100%; height:100%; min-height:400px; }
         .krb-map-loading { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:#080b12; z-index:5; font-family:'Space Mono',monospace; font-size:0.82rem; color:rgba(255,255,255,0.25); letter-spacing:0.12em; }
         .krb-timestamp { position:absolute; bottom:0.75rem; left:0.75rem; z-index:500; font-size:0.68rem; color:rgba(255,255,255,0.2); font-family:'Space Mono',monospace; background:rgba(8,11,18,0.8); padding:0.25rem 0.5rem; border-radius:4px; pointer-events:none; }
         .krb-error { position:absolute; top:1rem; left:50%; transform:translateX(-50%); z-index:600; background:rgba(185,28,28,0.95); border:1px solid #ef4444; border-radius:6px; padding:0.45rem 1rem; font-size:0.78rem; color:#fca5a5; white-space:nowrap; }
